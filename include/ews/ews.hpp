@@ -12686,7 +12686,6 @@ namespace ews
                 result += "</t:Updates>";
                 return result;
             }
-
         };
 
         item_id
@@ -12695,7 +12694,6 @@ namespace ews
                     send_meeting_cancellations cancellations =
                         send_meeting_cancellations::send_to_none)
         {
-            
             const std::string request_string =
                 "<m:UpdateItem "
                 "MessageDisposition=\"SaveOnly\" "
@@ -12707,6 +12705,40 @@ namespace ews
                                                        "<m:ItemChanges>"
                                                        "<t:ItemChange>" +
                 id.to_xml() + update_item_renderer(prop).string() +
+                                                        "</t:ItemChange>"
+                                                        "</m:ItemChanges>"
+                                                        "</m:UpdateItem>";
+
+            auto response = request(request_string);
+            const auto response_message =
+                internal::update_item_response_message::parse(
+                    std::move(response));
+            if (!response_message.success())
+            {
+                throw exchange_error(response_message.get_response_code());
+            }
+            EWS_ASSERT(!response_message.items().empty() &&
+                       "Expected at least one item");
+            return response_message.items().front();
+        }
+
+         item_id
+        update_item(item_id id, update_item_renderer uir,
+                    conflict_resolution res = conflict_resolution::auto_resolve,
+                    send_meeting_cancellations cancellations =
+                        send_meeting_cancellations::send_to_none)
+        {
+            const std::string request_string =
+                "<m:UpdateItem "
+                "MessageDisposition=\"SaveOnly\" "
+                "ConflictResolution=\"" +
+                internal::enum_to_str(res) +
+                "\" "
+                "SendMeetingInvitationsOrCancellations=\"" +
+                internal::enum_to_str(cancellations) + "\">"
+                                                       "<m:ItemChanges>"
+                                                       "<t:ItemChange>" +
+                id.to_xml() + uir.string() +
                                                         "</t:ItemChange>"
                                                         "</m:ItemChanges>"
                                                         "</m:UpdateItem>";
