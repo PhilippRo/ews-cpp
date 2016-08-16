@@ -34,6 +34,7 @@
 #include <type_traits>
 #include <utility>
 #include <vector>
+#include <tuple>
 
 #include <curl/curl.h>
 
@@ -12579,27 +12580,122 @@ namespace ews
 
         // TODO: currently, this can only do <SetItemField>, need to support
         // <AppendToItemField> and <DeleteItemField>
+
+        enum class update_item_renderer_actions{
+            SetItemField,
+            AppendToItemField,
+            UpdateItemField,
+            Unknown
+        };
+
+        class update_item_renderer{
+            //This class is supposed to render the Content of <t:Updates>
+        protected:
+            std::vector<update_item_renderer_actions> actions;
+            std::vector<property> content;
+            bool typesSubstituded = true;
+
+            void substitudeUnknownActions(){
+                if(typesSubstituded){ 
+                    //nothing to do
+                } else{
+                    for(unsigned int i = 0; i < actions.size(); i++){
+                        if ( //   prop.path() == "calendar:OptionalAttendees"
+                             //|| prop.path() == "calendar:RequiredAttendees"
+                             //|| prop.path() == "calendar:Resources"
+                             content[i].path() == "item:Body" ||
+                             content[i].path() == "message:ToRecipients" ||
+                             content[i].path() == "message:CcRecipients" ||
+                             content[i].path() == "message:BccRecipients" ||
+                             content[i].path() == "message:ReplyTo")
+                        {
+                            actions[i] = update_item_renderer_actions::AppendToItemField;
+                        }else{
+                            actions[i] = update_item_renderer_actions::SetItemField;
+                        }
+                    }
+                    typesSubstituded = true;
+                }
+            }
+
+            void appendSetItem(std::string& result, const property& prop){
+                result += "<t:SetItemField>" +
+                            prop.to_xml() +
+                          "</t:SetItemField>";
+            }
+            void appendUpItem(std::string& result, const property& prop){
+                result += "<t:UpdateItemField>"+
+                            prop.to_xml()+
+                          "</t:UpdateItemField>";
+            }
+            void appendAppendItem(std::string& result, const property& prop){
+                result += "<t:AppendToItemField>"+
+                            prop.to_xml()+
+                          "</t:AppendToItemField>";
+            }
+        public:
+            update_item_renderer(): actions(), content(){}
+
+            update_item_renderer(property paraContent, update_item_renderer_actions paraAct)
+                : actions()
+                , content() {
+                    actions.push_back(paraAct);
+                    content.push_back(paraContent);
+                }
+
+            update_item_renderer(property paraContent)
+                : actions()
+                , content()
+                , typesSubstituded(false){
+                    actions.push_back(update_item_renderer_actions::Unknown);
+                    content.push_back(paraContent);
+                }
+
+            void append(property paraContent, update_item_renderer_actions paraAct)
+            {
+                actions.push_back(paraAct);
+                content.push_back(paraContent);
+            }
+
+            void append(property paraContent)
+            {
+                actions.push_back(update_item_renderer_actions::Unknown);
+                content.push_back(paraContent);
+                typesSubstituded = false;
+            }
+
+            std::tuple<property&, update_item_renderer_actions&> operator[](int i){
+                return std::make_tuple(content[i], actions[i]);
+            }
+
+            std::string string(){
+                std::string result{"<t:Updates>"};
+                substitudeUnknownActions();
+                for(unsigned int i = 0; i < actions.size(); i++){
+                    if(actions[i]==update_item_renderer_actions::SetItemField){
+                        appendSetItem( result, content[i]);
+                    }else if( actions[i] == update_item_renderer_actions::UpdateItemField){
+                        appendUpItem(result, content[i]);
+                    }else if( actions[i] == update_item_renderer_actions::AppendToItemField){
+                        appendAppendItem(result, content[i]);
+                    }else{
+                        //nothing to do
+                        continue;
+                    }
+                }
+                result += "</t:Updates>";
+                return result;
+            }
+
+        };
+
         item_id
         update_item(item_id id, property prop,
                     conflict_resolution res = conflict_resolution::auto_resolve,
                     send_meeting_cancellations cancellations =
                         send_meeting_cancellations::send_to_none)
         {
-            auto item_change_open_tag = "<t:SetItemField>";
-            auto item_change_close_tag = "</t:SetItemField>";
-            if ( //   prop.path() == "calendar:OptionalAttendees"
-                 //|| prop.path() == "calendar:RequiredAttendees"
-                 //|| prop.path() == "calendar:Resources"
-                prop.path() == "item:Body" ||
-                prop.path() == "message:ToRecipients" ||
-                prop.path() == "message:CcRecipients" ||
-                prop.path() == "message:BccRecipients" ||
-                prop.path() == "message:ReplyTo")
-            {
-                item_change_open_tag = "<t:AppendToItemField>";
-                item_change_close_tag = "</t:AppendToItemField>";
-            }
-
+            
             const std::string request_string =
                 "<m:UpdateItem "
                 "MessageDisposition=\"SaveOnly\" "
@@ -12610,8 +12706,7 @@ namespace ews
                 internal::enum_to_str(cancellations) + "\">"
                                                        "<m:ItemChanges>"
                                                        "<t:ItemChange>" +
-                id.to_xml() + "<t:Updates>" + item_change_open_tag +
-                prop.to_xml() + item_change_close_tag + "</t:Updates>"
+                id.to_xml() + update_item_renderer(prop).string() +
                                                         "</t:ItemChange>"
                                                         "</m:ItemChanges>"
                                                         "</m:UpdateItem>";
